@@ -6,6 +6,7 @@ tests/
 docs/superpowers/
 src/
 media/
+images/*.svg
 scripts/
 *.vsix
 **/*.map

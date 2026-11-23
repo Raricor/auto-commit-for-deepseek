@@ -67,3 +67,12 @@ SOFTWARE.
 - License: Creative Commons Attribution 4.0 International (CC BY 4.0) —
   Copyright (c) Microsoft Corporation. See
   <https://creativecommons.org/licenses/by/4.0/>.
+
+## DeepSeek whale logo (extension icon)
+
+- Source: the whale path of `figures/logo.svg` in
+  [deepseek-ai/DeepSeek-V2](https://github.com/deepseek-ai/DeepSeek-V2), combined with our own drawing of a
+  water spout that forks like a git branch, in `images/icon.png` / `images/icon.svg`.
+- The DeepSeek name and whale logo are trademarks of their owner (DeepSeek). They are used here only
+  to identify the service this non-commercial, open-source extension works with. This project is not
+  affiliated with or endorsed by DeepSeek.
