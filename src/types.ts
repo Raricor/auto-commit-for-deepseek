@@ -213,4 +213,8 @@ export type WebviewMessage =
     /** Runs the "Set API Key" command (password input box, stored in SecretStorage). */
     | { type: 'setApiKey' }
     /** Opens VS Code settings filtered to this extension (baseUrl, headers, input limit). */
-    | { type: 'openEndpointSettings' };
+    | { type: 'openEndpointSettings' }
+    /** Reveals the "AutoCommit For DeepSeek" output channel. */
+    | { type: 'showLogs' }
+    /** Opens the run record (JSONL) of the latest run of this panel; falls back to the run picker. */
+    | { type: 'openRunLog' };

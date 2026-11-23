@@ -27,6 +27,8 @@ export interface GenerationEvents {
     onReorder?(ids: string[]): void;
     /** State of every model request, in emission order. */
     onAgentEvent?(event: AgentEvent): void;
+    /** Full prompt of a request, emitted right after its `started` event. */
+    onAgentPrompt?(id: string, prompt: string): void;
     /** Asked when the estimate exceeds CONFIRM_REQUEST_THRESHOLD. Resolve false to stop. */
     confirmRequests?(estimate: RequestEstimate): Promise<boolean>;
 }
@@ -78,6 +80,7 @@ export async function generateCommits(
             token: abort.token,
             limiter,
             onAgentEvent: event => events?.onAgentEvent?.(event),
+            onAgentPrompt: (id, prompt) => events?.onAgentPrompt?.(id, prompt),
             onProviderError: error => {
                 if (token.isCancellationRequested || providerError) { return; }
                 providerError = toError(error);
@@ -230,6 +233,7 @@ export async function generateForGroup(
     token: vscode.CancellationToken,
     history?: GitLogEntry[],
     onAgentEvent?: (event: AgentEvent) => void,
+    onAgentPrompt?: (id: string, prompt: string) => void,
 ): Promise<CommitCandidate> {
     const abort = createLinkedToken(token);
     try {
@@ -241,6 +245,7 @@ export async function generateForGroup(
             token: abort.token,
             limiter,
             onAgentEvent,
+            onAgentPrompt,
             onProviderError: () => abort.abort(),
         });
         return await generateGroupCandidate({

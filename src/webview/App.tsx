@@ -205,6 +205,14 @@ export default function App() {
         postMessage({ type: 'openEndpointSettings' });
     }, []);
 
+    const handleShowLogs = useCallback(() => {
+        postMessage({ type: 'showLogs' });
+    }, []);
+
+    const handleOpenRunLog = useCallback(() => {
+        postMessage({ type: 'openRunLog' });
+    }, []);
+
     const handleReorderSlots = useCallback((slots: Slot[]) => {
         dispatch({ type: 'REORDER_SLOTS', slots });
     }, []);
@@ -309,6 +317,7 @@ export default function App() {
                         <div className="error-banner">
                             <p>{state.error}</p>
                             <button className="error-retry-btn" onClick={handleGenerate}>Retry</button>
+                            <button className="error-retry-btn" onClick={handleShowLogs}>Show logs</button>
                         </div>
                     )}
 
@@ -421,6 +430,8 @@ export default function App() {
                             agents={state.agents}
                             focusAgentId={state.focusAgentId}
                             onFocusHandled={handleAgentFocusHandled}
+                            onOpenRunLog={handleOpenRunLog}
+                            onShowLogs={handleShowLogs}
                         />
                     )}
                 </div>

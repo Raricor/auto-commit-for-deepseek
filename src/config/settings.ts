@@ -22,6 +22,11 @@ export interface EndpointSettings {
     maxInputTokens: number;
 }
 
+export interface RunLogSettings {
+    keep: number;
+    includePrompts: boolean;
+}
+
 export function getSettings(): GenerateOptions {
     const config = vscode.workspace.getConfiguration(SETTINGS_SECTION);
     return {
@@ -53,6 +58,14 @@ export function getEndpointSettings(): EndpointSettings {
             MAX_INPUT_TOKENS,
             DEFAULT_MAX_INPUT_TOKENS
         ),
+    };
+}
+
+export function getRunLogSettings(): RunLogSettings {
+    const config = vscode.workspace.getConfiguration(SETTINGS_SECTION);
+    return {
+        keep: clampInteger(config.get<number>('runLogs.keep', 20), 0, 200, 20),
+        includePrompts: config.get<boolean>('runLogs.includePrompts', false),
     };
 }
 

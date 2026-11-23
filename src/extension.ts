@@ -1,11 +1,15 @@
 import * as vscode from 'vscode';
 import { clearApiKey, setApiKey } from './config/apiKey';
 import { SETTINGS_SECTION } from './config/settings';
+import { createOutputLogger } from './logging/logger';
+import { openRunLogPicker } from './logging/runLogPicker';
 import { PanelManager } from './ui/panelManager';
 import { createStatusBar } from './ui/statusBar';
 
 export function activate(context: vscode.ExtensionContext): void {
-    const panelManager = PanelManager.getInstance(context);
+    const logger = createOutputLogger();
+    context.subscriptions.push(logger);
+    const panelManager = PanelManager.getInstance(context, logger);
 
     context.subscriptions.push(
         vscode.commands.registerCommand(
@@ -24,6 +28,14 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand(
             'autocommit-for-deepseek.clearApiKey',
             () => clearApiKey(context.secrets)
+        ),
+        vscode.commands.registerCommand(
+            'autocommit-for-deepseek.showLogs',
+            () => logger.show()
+        ),
+        vscode.commands.registerCommand(
+            'autocommit-for-deepseek.openRunLog',
+            () => openRunLogPicker(context.globalStorageUri)
         ),
         context.secrets.onDidChange(() => {
             void panelManager.notifyEndpointChanged(true);

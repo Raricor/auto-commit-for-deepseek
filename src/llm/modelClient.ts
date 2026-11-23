@@ -31,6 +31,8 @@ export interface ModelClientOptions {
     limiter: Limiter;
     /** Receives every lifecycle event of every request. Exceptions are ignored. */
     onAgentEvent?: (event: AgentEvent) => void;
+    /** Receives the full prompt of a started request. Exceptions are ignored. */
+    onAgentPrompt?: (id: string, prompt: string) => void;
     /** Converts a cancelled request into the caller's cancellation error. */
     onCancelled?: () => void;
     /** Called once for a request that failed at the provider boundary. */
@@ -105,6 +107,11 @@ export function createModelClient(config: ModelClientOptions): ModelClient {
                 ...(meta.groupIndex === undefined ? {} : { groupIndex: meta.groupIndex }),
             };
             emit({ type: 'started', agent });
+            try {
+                config.onAgentPrompt?.(id, prompt);
+            } catch {
+                // Prompt observers (run records) must never break the request.
+            }
 
             let settled = false;
             const settle = (event: AgentEvent): void => {

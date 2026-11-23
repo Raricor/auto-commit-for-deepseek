@@ -1,10 +1,21 @@
+import { existsSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
 import { resolveApiKey } from '../config/apiKey';
-import { getEndpointSettings, getSettings, updateSettings } from '../config/settings';
+import {
+    getEndpointSettings, getRunLogSettings, getSettings, updateSettings,
+} from '../config/settings';
 import { createDeepSeekModel, listModels, MODEL_PRESETS } from '../deepseek';
 import { parseDiff, resolveStagingPaths } from '../git/diffAnalyzer';
 import { GitIdentityError } from '../git/gitIdentity';
 import { GitService } from '../git/gitService';
+import {
+    AgentLog, formatError, formatGroups, formatRunFinished, formatRunStart,
+    redactSecrets, type Logger, NOOP_LOGGER,
+} from '../logging/logger';
+import {
+    RunRecorder, type RunRecorderConfig, type RunStatus, type RunTotals,
+} from '../logging/runRecorder';
 import { ModelError } from '../llm/chatModel';
 import {
     generateCommits,
@@ -12,7 +23,6 @@ import {
     type RequestEstimate,
 } from '../llm/llmService';
 import type {
-    AgentEvent,
     CommitCandidate,
     EndpointStatus,
     ExtensionMessage,
@@ -58,11 +68,18 @@ export class PanelManager {
     private retrying = false;
     private generationTree: string | undefined;
     private lastRun: { groups: PlannedGroup[]; changes: FileChange[] } | undefined;
+    private readonly agentLog: AgentLog;
+    private lastRunLogPath: string | undefined;
 
-    private constructor(private readonly context: vscode.ExtensionContext) { }
+    private constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly logger: Logger = NOOP_LOGGER,
+    ) {
+        this.agentLog = new AgentLog(logger);
+    }
 
-    static getInstance(context: vscode.ExtensionContext): PanelManager {
-        PanelManager.instance ??= new PanelManager(context);
+    static getInstance(context: vscode.ExtensionContext, logger: Logger = NOOP_LOGGER): PanelManager {
+        PanelManager.instance ??= new PanelManager(context, logger);
         return PanelManager.instance;
     }
 
@@ -121,13 +138,16 @@ export class PanelManager {
                 ],
             }
         );
+        this.panel.iconPath = vscode.Uri.joinPath(
+            this.context.extensionUri, 'images', 'icon.png'
+        );
 
         this.panel.webview.html = buildWebviewHtml(this.panel.webview, this.context.extensionUri);
 
         this.panel.webview.onDidReceiveMessage(
             (msg: WebviewMessage) => {
                 this.handleMessage(msg).catch((err) => {
-                    console.error('[AutoCommit] handleMessage error:', err);
+                    this.logger.error(formatError('handleMessage failed', err));
                     this.post({ type: 'error', message: String(err) });
                 });
             },
@@ -251,6 +271,16 @@ export class PanelManager {
                 );
                 break;
             }
+
+            case 'showLogs': {
+                this.logger.show();
+                break;
+            }
+
+            case 'openRunLog': {
+                await this.openLatestRunLog();
+                break;
+            }
         }
     }
 
@@ -272,7 +302,7 @@ export class PanelManager {
             this.post({ type: 'availableModels', models });
             return models;
         } catch (err) {
-            console.warn('[AutoCommit] Failed to load models:', err);
+            this.logger.warn(formatError('Failed to load models', err));
             return this.postPresetModels();
         }
     }
@@ -297,7 +327,7 @@ export class PanelManager {
             this.recentCommits = await gitService.getRecentCommits(20);
             this.post({ type: 'commitHistory', commits: this.recentCommits });
         } catch (err) {
-            console.error('[AutoCommit] Failed to load commit history:', err);
+            this.logger.error(formatError('Failed to load commit history', err));
             this.post({ type: 'commitHistory', commits: [] });
         }
     }
@@ -341,7 +371,7 @@ export class PanelManager {
             });
             this.post({ type: 'stagedFiles', files });
         } catch (err) {
-            console.error('[AutoCommit] Failed to load staged files:', err);
+            this.logger.error(formatError('Failed to load staged files', err));
             this.post({ type: 'stagedFiles', files: [] });
         }
     }
@@ -360,7 +390,14 @@ export class PanelManager {
         this.retrying = false;
         this.candidates = [];
         this.lastRun = undefined;
+        this.agentLog.clear();
         this.post({ type: 'loading' });
+
+        let recorder: RunRecorder | undefined;
+        let loggedStart = false;
+        let runStatus: RunStatus = 'error';
+        let runError: string | undefined;
+        const runStartedAt = Date.now();
 
         try {
             const apiKey = await resolveApiKey(this.context.secrets);
@@ -396,6 +433,7 @@ export class PanelManager {
                 // commitSelected only commits this tree, never the working tree.
                 generationTree = await gitService.writeIndexTree();
             } catch (err) {
+                this.logger.error(formatError('Failed to read the staged diff', err));
                 if (isActiveRun()) {
                     this.post({ type: 'error', message: `Failed to read staged diff: ${String(err)}` });
                 }
@@ -437,6 +475,38 @@ export class PanelManager {
                 maxInputTokens: endpoint.maxInputTokens,
             });
 
+            const headerNames = Object.keys(endpoint.headers);
+            const repoName = basename(gitService.repoRoot);
+            this.logger.info(formatRunStart({
+                trigger: 'generate',
+                repo: repoName,
+                files: changes.length,
+                model: settings.model ?? '',
+                effort: settings.reasoningEffort ?? '',
+                baseUrl: endpoint.baseUrl,
+                concurrency: settings.concurrency ?? 4,
+                language: settings.language,
+                minCommits: settings.minCommits ?? 0,
+                maxCommits: settings.maxCommits ?? 0,
+                headerNames,
+            }));
+            loggedStart = true;
+            recorder = this.createRunRecorder({
+                trigger: 'generate',
+                repo: repoName,
+                files: changes.length,
+                model: settings.model ?? '',
+                baseUrl: endpoint.baseUrl,
+                effort: settings.reasoningEffort ?? '',
+                concurrency: settings.concurrency ?? 4,
+                language: settings.language,
+                conventionalCommits: settings.conventionalCommits,
+                minCommits: settings.minCommits ?? 0,
+                maxCommits: settings.maxCommits ?? 0,
+                headerNames,
+            });
+            this.lastRunLogPath = recorder?.path;
+
             const result = await generateCommits(
                 model,
                 changes,
@@ -449,24 +519,40 @@ export class PanelManager {
                         this.post({ type: 'progress', progress });
                     },
                     onGroupsPlanned: (groups) => {
+                        recorder?.recordGroups(groups);
+                        this.logger.info(formatGroups(groups));
                         if (!isActiveRun()) { return; }
                         this.lastRun = { groups, changes };
                         this.post({ type: 'groupsPlanned', groups });
                     },
                     onCandidate: (groupIndex, candidate) => {
+                        recorder?.recordCandidate(groupIndex, candidate);
                         if (!isActiveRun()) { return; }
                         this.candidates.push(candidate);
                         this.post({ type: 'addCandidate', candidate, groupIndex });
                     },
                     onGroupFailed: (group, error) => {
+                        recorder?.recordGroupFailed(group.index, error.message);
+                        this.logger.warn(
+                            `Group #${group.index} "${group.label}" failed: ` +
+                            redactSecrets(error.message)
+                        );
                         if (!isActiveRun()) { return; }
                         this.post({ type: 'groupFailed', group, message: error.message });
                     },
                     onNotice: (level, message) => {
+                        recorder?.recordNotice(level, message);
+                        if (level === 'warning') {
+                            this.logger.warn(message);
+                        } else {
+                            this.logger.info(message);
+                        }
                         if (!isActiveRun()) { return; }
                         this.post({ type: 'notice', level, message });
                     },
                     onReorder: (ids) => {
+                        recorder?.recordReorder(ids);
+                        this.logger.info(`Commit order: ${ids.join(', ')}`);
                         if (!isActiveRun()) { return; }
                         const byId = new Map(this.candidates.map((candidate) => [candidate.id, candidate]));
                         this.candidates = ids
@@ -475,28 +561,45 @@ export class PanelManager {
                         this.post({ type: 'reorder', ids });
                     },
                     onAgentEvent: (event) => {
+                        recorder?.onAgentEvent(event);
+                        this.agentLog.handle(event);
                         if (!isActiveRun()) { return; }
                         this.getAgentBatcher().push(event);
                     },
+                    onAgentPrompt: (id, prompt) => recorder?.onAgentPrompt(id, prompt),
                     confirmRequests: (estimate) => this.confirmRequests(estimate),
                 }
             );
 
+            runStatus = !isActiveRun()
+                ? 'cancelled'
+                : result.declined ? 'declined' : 'done';
+
             if (result.declined && isActiveRun()) {
+                const message = 'Stopped before sending generation requests.';
+                recorder?.recordNotice('info', message);
+                this.logger.info(message);
                 this.post({
                     type: 'notice',
                     level: 'info',
-                    message: 'Stopped before sending generation requests.',
+                    message,
                 });
             }
         } catch (err) {
-            if (isActiveRun() && !(token.isCancellationRequested || err instanceof vscode.CancellationError)) {
+            if (!isActiveRun() || token.isCancellationRequested ||
+                err instanceof vscode.CancellationError) {
+                runStatus = 'cancelled';
+            } else {
+                runStatus = 'error';
+                runError = err instanceof Error ? err.message : String(err);
+                this.logger.error(formatError('Generation failed', err));
                 this.post({ type: 'error', message: `Generation failed: ${String(err)}` });
                 if (err instanceof ModelError && err.kind === 'auth') {
                     this.promptForApiKey(AUTH_API_KEY_MESSAGE);
                 }
             }
         } finally {
+            await this.finishRunRecord(recorder, runStatus, runError, loggedStart, runStartedAt);
             if (runId === this.generationRunId) {
                 this.generating = false;
                 if (!token.isCancellationRequested) { this.post({ type: 'done' }); }
@@ -535,9 +638,17 @@ export class PanelManager {
         }
 
         this.retrying = true;
+        this.agentLog.clear();
         const cancellation = new vscode.CancellationTokenSource();
         this.cancellation = cancellation;
         const token = cancellation.token;
+
+        let recorder: RunRecorder | undefined;
+        let loggedStart = false;
+        let runStatus: RunStatus = 'error';
+        let runError: string | undefined;
+        let repoName = this.currentRepoRoot ? basename(this.currentRepoRoot) : 'repo';
+        const runStartedAt = Date.now();
 
         try {
             const apiKey = await resolveApiKey(this.context.secrets);
@@ -556,6 +667,7 @@ export class PanelManager {
                         'No Git repository found. Make sure the workspace contains a git repository.'
                     );
                 }
+                repoName = basename(repo.rootUri.fsPath);
                 settings = {
                     ...settings,
                     language: await new GitService(repo).detectLanguage(),
@@ -572,6 +684,39 @@ export class PanelManager {
                 maxInputTokens: endpoint.maxInputTokens,
             });
 
+            const headerNames = Object.keys(endpoint.headers);
+            this.logger.info(formatRunStart({
+                trigger: 'retry',
+                repo: repoName,
+                files: run.changes.length,
+                model: settings.model ?? '',
+                effort: settings.reasoningEffort ?? '',
+                baseUrl: endpoint.baseUrl,
+                concurrency: settings.concurrency ?? 4,
+                language: settings.language,
+                minCommits: settings.minCommits ?? 0,
+                maxCommits: settings.maxCommits ?? 0,
+                headerNames,
+                groupIndex: group.index,
+            }));
+            loggedStart = true;
+            recorder = this.createRunRecorder({
+                trigger: 'retry',
+                repo: repoName,
+                files: run.changes.length,
+                model: settings.model ?? '',
+                baseUrl: endpoint.baseUrl,
+                effort: settings.reasoningEffort ?? '',
+                concurrency: settings.concurrency ?? 4,
+                language: settings.language,
+                conventionalCommits: settings.conventionalCommits,
+                minCommits: settings.minCommits ?? 0,
+                maxCommits: settings.maxCommits ?? 0,
+                headerNames,
+                groupIndex: group.index,
+            });
+            this.lastRunLogPath = recorder?.path;
+
             const candidate = await generateForGroup(
                 model,
                 group,
@@ -580,26 +725,46 @@ export class PanelManager {
                 token,
                 this.recentCommits,
                 (event) => {
+                    recorder?.onAgentEvent(event);
+                    this.agentLog.handle(event);
                     if (token.isCancellationRequested) { return; }
                     this.getAgentBatcher().push(event);
-                }
+                },
+                (id, prompt) => recorder?.onAgentPrompt(id, prompt),
             );
-            if (token.isCancellationRequested) { return; }
+            if (token.isCancellationRequested) {
+                runStatus = 'cancelled';
+                return;
+            }
 
+            recorder?.recordCandidate(group.index, candidate);
+            runStatus = 'done';
             this.candidates.push(candidate);
+            this.logger.info(
+                `Retry finished · group #${group.index} "${group.label}" · ` +
+                firstLine(candidate.message)
+            );
             this.post({ type: 'addCandidate', candidate, groupIndex: group.index });
         } catch (err) {
-            if (!token.isCancellationRequested && !(err instanceof vscode.CancellationError)) {
-                this.post({
-                    type: 'groupFailed',
-                    group,
-                    message: err instanceof Error ? err.message : String(err),
-                });
+            if (token.isCancellationRequested || err instanceof vscode.CancellationError) {
+                runStatus = 'cancelled';
+            } else {
+                runStatus = 'error';
+                runError = err instanceof Error ? err.message : String(err);
+                const message = err instanceof Error ? err.message : String(err);
+                recorder?.recordGroupFailed(group.index, message);
+                this.logger.error(formatError('Retry failed', err));
+                this.logger.warn(
+                    `Group #${group.index} "${group.label}" retry failed: ` +
+                    redactSecrets(message)
+                );
+                this.post({ type: 'groupFailed', group, message });
                 if (err instanceof ModelError && err.kind === 'auth') {
                     this.promptForApiKey(AUTH_API_KEY_MESSAGE);
                 }
             }
         } finally {
+            await this.finishRunRecord(recorder, runStatus, runError, loggedStart, runStartedAt);
             if (this.cancellation === cancellation) {
                 this.retrying = false;
             }
@@ -630,6 +795,9 @@ export class PanelManager {
             await gitService.assertCommitIdentityConfigured();
             const currentTree = await gitService.writeIndexTree();
             if (!this.generationTree || currentTree !== this.generationTree) {
+                this.logger.error(
+                    'Commit refused: the staged changes changed since generation.'
+                );
                 this.post({
                     type: 'error',
                     message: 'The staged changes have changed since generation. Generate again before committing.',
@@ -648,11 +816,30 @@ export class PanelManager {
             );
 
             if (committedIds.length > 0) {
+                // The snapshot method returns ids, not hashes; read the new
+                // commits back so the log shows the hash a user can look up.
+                const recent = await gitService.getRecentCommits(committedIds.length);
+                const usedHashes = new Set<string>();
+                for (const id of committedIds) {
+                    const candidate = selected.find((item) => item.id === id);
+                    const message = firstLine(candidate?.message ?? '');
+                    const match = recent.find((commit) =>
+                        commit.message === message && !usedHashes.has(commit.hash)
+                    );
+                    if (match) { usedHashes.add(match.hash); }
+                    this.logger.info(
+                        `Committed ${match ? match.hash.slice(0, 7) : '(unknown hash)'} ${message}`
+                    );
+                }
                 this.post({ type: 'committed', count: committedIds.length, ids: committedIds });
                 this.candidates = this.candidates.filter((c) => !committedIds.includes(c.id));
             }
 
             if (error) {
+                this.logger.error(
+                    `Commit failed after ${committedIds.length} commit(s): ` +
+                    redactSecrets(error.message)
+                );
                 this.post({
                     type: 'error',
                     message: `Commit failed after ${committedIds.length} commit(s): ${error.message}`,
@@ -667,6 +854,7 @@ export class PanelManager {
             await this.loadStagedFiles();
             await this.loadCommitHistory();
         } catch (err) {
+            this.logger.error(formatError('Commit failed', err));
             this.post({
                 type: 'error',
                 message: err instanceof GitIdentityError
@@ -697,6 +885,59 @@ export class PanelManager {
                 // ignore
             }
         }
+    }
+
+    private createRunRecorder(
+        config: Omit<RunRecorderConfig, 'directory' | 'keep' | 'includePrompts' | 'logger'>,
+    ): RunRecorder | undefined {
+        const storage = this.context.globalStorageUri;
+        if (!storage) { return undefined; }
+        const { keep, includePrompts } = getRunLogSettings();
+        if (keep <= 0) { return undefined; }
+        return new RunRecorder({
+            ...config,
+            directory: join(storage.fsPath, 'runs'),
+            keep,
+            includePrompts,
+            logger: this.logger,
+        });
+    }
+
+    private async finishRunRecord(
+        recorder: RunRecorder | undefined,
+        status: RunStatus,
+        error: string | undefined,
+        loggedStart: boolean,
+        startedAt: number,
+    ): Promise<void> {
+        if (!loggedStart) { return; }
+        let totals: RunTotals = {
+            requests: 0,
+            promptTokens: 0,
+            cacheHitTokens: 0,
+            reasoningTokens: 0,
+            completionTokens: 0,
+        };
+        let durationMs = Date.now() - startedAt;
+        if (recorder) {
+            try {
+                totals = await recorder.close(status, error);
+                durationMs = recorder.elapsedMs;
+            } catch (err) {
+                this.logger.warn(formatError('Failed to close the run record', err));
+            }
+        }
+        this.logger.info(formatRunFinished(status, durationMs, totals));
+    }
+
+    private async openLatestRunLog(): Promise<void> {
+        const filePath = this.lastRunLogPath;
+        if (filePath && existsSync(filePath)) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+            await vscode.window.showTextDocument(document);
+            return;
+        }
+        await vscode.commands.executeCommand('autocommit-for-deepseek.openRunLog');
     }
 
     private getAgentBatcher(): AgentBatcher {
@@ -751,6 +992,10 @@ export class PanelManager {
 }
 
 // ─── Webview HTML ─────────────────────────────────────────────────────────────
+
+function firstLine(message: string): string {
+    return message.split(/\r?\n/, 1)[0];
+}
 
 function countDiffLines(diff: string): { additions: number; deletions: number } {
     let additions = 0;

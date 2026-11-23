@@ -4,7 +4,9 @@ import {
     ChevronRight,
     Circle,
     CircleSlash,
+    FileText,
     LoaderCircle,
+    ScrollText,
     X,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,6 +22,8 @@ interface Props {
     agents: AgentRow[];
     focusAgentId: string | null;
     onFocusHandled: () => void;
+    onOpenRunLog: () => void;
+    onShowLogs: () => void;
 }
 
 interface AgentRowProps {
@@ -183,7 +187,13 @@ const AgentRowView = memo(function AgentRowView({
     );
 });
 
-export default function AgentsPanel({ agents, focusAgentId, onFocusHandled }: Props) {
+export default function AgentsPanel({
+    agents,
+    focusAgentId,
+    onFocusHandled,
+    onOpenRunLog,
+    onShowLogs,
+}: Props) {
     const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
     const [highlightedId, setHighlightedId] = useState<string | null>(null);
     const [now, setNow] = useState(() => Date.now());
@@ -272,16 +282,38 @@ export default function AgentsPanel({ agents, focusAgentId, onFocusHandled }: Pr
     return (
         <div className="agents-panel">
             <div className="agents-summary">
-                <div className="agents-summary-counts">
-                    {summary.total} {summary.total === 1 ? 'request' : 'requests'}
-                    {summary.running > 0 && ` · ${summary.running} running`}
-                    {summary.failed > 0 && ` · ${summary.failed} failed`}
+                <div className="agents-summary-main">
+                    <div className="agents-summary-counts">
+                        {summary.total} {summary.total === 1 ? 'request' : 'requests'}
+                        {summary.running > 0 && ` · ${summary.running} running`}
+                        {summary.failed > 0 && ` · ${summary.failed} failed`}
+                    </div>
+                    <div className="agents-summary-tokens">
+                        Input {formatCount(summary.inputTokens)} ({Math.round(summary.cacheHitRate * 100)}% cached)
+                        {' · '}Thinking {formatCount(summary.thinkingTokens)}
+                        {' · '}Output {formatCount(summary.outputTokens)}
+                        {' · '}{formatDuration(summary.durationMs)}
+                    </div>
                 </div>
-                <div className="agents-summary-tokens">
-                    Input {formatCount(summary.inputTokens)} ({Math.round(summary.cacheHitRate * 100)}% cached)
-                    {' · '}Thinking {formatCount(summary.thinkingTokens)}
-                    {' · '}Output {formatCount(summary.outputTokens)}
-                    {' · '}{formatDuration(summary.durationMs)}
+                <div className="agents-summary-actions">
+                    <button
+                        type="button"
+                        className="agent-summary-btn"
+                        title="Open run log"
+                        aria-label="Open run log"
+                        onClick={onOpenRunLog}
+                    >
+                        <FileText size={14} />
+                    </button>
+                    <button
+                        type="button"
+                        className="agent-summary-btn"
+                        title="Show output"
+                        aria-label="Show output"
+                        onClick={onShowLogs}
+                    >
+                        <ScrollText size={14} />
+                    </button>
                 </div>
             </div>
 

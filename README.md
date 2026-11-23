@@ -56,6 +56,8 @@ answer for each request, with status, retries and token usage.
 | `autocommit-for-deepseek.language` | `"en" \| "zh" \| "auto"` | `"en"` | Message language; `auto` follows your recent commits |
 | `autocommit-for-deepseek.minCommits` | `number` (0–200) | `0` | Fewest commits; `0` means no limit |
 | `autocommit-for-deepseek.maxCommits` | `number` (0–200) | `0` | Most commits; `0` means no limit |
+| `autocommit-for-deepseek.runLogs.keep` | `number` (0–200) | `20` | How many run records to keep; `0` disables them |
+| `autocommit-for-deepseek.runLogs.includePrompts` | `boolean` | `false` | Also store each request's prompt (contains your staged diffs) in run records |
 
 The panel's settings area edits model, effort, language and the commit range. Use the gear next to
 the endpoint to open the remaining settings.
@@ -121,10 +123,25 @@ Staged changes (git diff --cached)          ── index snapshot recorded (git 
   staged files are committed exactly as staged. Afterwards the index is restored to the snapshot.
   If the staged files change after generation, committing is refused until you generate again.
 
+## Logs
+
+- **Output panel**: the *AutoCommit For DeepSeek* channel logs each run's settings, the planned
+  groups, every request (duration, tokens, retries, errors) and commit results. Change its level with
+  **Developer: Set Log Level…**. It never contains the API key, header values, diffs, prompts or
+  thinking text.
+- **Run records**: every generation and single-group retry is saved as one JSONL file in the
+  extension's global storage (`runs/`), written while the run progresses. It holds each request's
+  full thinking and answer, usage and errors, plus the planned groups, generated commits and the
+  final status. The newest 20 are kept (`runLogs.keep`).
+- Open them with **Show Logs** / **Open Run Log…**, the two buttons at the top of the Agents tab,
+  or **Show logs** on an error.
+
 ## Privacy
 
 The staged diffs, your recent commit messages (for language and style) and your custom
 instructions are sent to the configured endpoint. Lockfile and generated-file contents are not.
+Run records stay on your machine (the VS Code server's machine when working remotely); they contain
+DeepSeek's thinking and answers, and prompts only if `runLogs.includePrompts` is enabled.
 
 ## Commands
 
@@ -133,6 +150,8 @@ instructions are sent to the configured endpoint. Lockfile and generated-file co
 | `AutoCommit For DeepSeek: Generate Commits` | Open the panel and generate from the staged changes |
 | `AutoCommit For DeepSeek: Set API Key` | Store the API key in SecretStorage |
 | `AutoCommit For DeepSeek: Clear API Key` | Remove the stored key |
+| `AutoCommit For DeepSeek: Show Logs` | Reveal the output channel |
+| `AutoCommit For DeepSeek: Open Run Log…` | Pick a saved run record and open it in the editor |
 
 ## Building From Source
 
@@ -149,3 +168,6 @@ code --install-extension autocommit-for-deepseek.vsix
 GPL-3.0. The grouping, generation and ordering strategy comes from
 [AutoCommit For Github Copilot](https://github.com/winterYANGWT/Auto-Commit-For-Github-Copilot)
 by the same author. Seti file icons: see `THIRD_PARTY_NOTICES.md`.
+
+The icon uses the DeepSeek whale logo, a trademark of DeepSeek, to identify the service this extension
+works with. This is a non-commercial open-source project, not affiliated with or endorsed by DeepSeek.

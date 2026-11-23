@@ -267,8 +267,44 @@ test('an agent moves started → waiting → thinking → answering → finished
     assert.equal(streamed, content);
 });
 
-// ─── 3. concurrency limit and queueing ──────────────────────────────────────
+test('every started agent receives its full prompt exactly once', async () => {
+    const files = [change('src/a.ts'), change('src/b.ts')];
+    const env = setup((prompt) => {
+        if (isGrouping(prompt)) {
+            return chatResult(JSON.stringify([{
+                label: 'Feature',
+                files: files.map(file => file.path),
+            }]));
+        }
+        if (isGeneration(prompt)) { return chatResult(reply('feat: prompt')); }
+        throw new Error(`unexpected prompt: ${prompt.slice(0, 80)}`);
+    });
+    const events: AgentEvent[] = [];
+    const prompts = new Map<string, string>();
+    const promptOrder: string[] = [];
 
+    const result = await service.generateCommits(
+        env.model, files, options, cancellation().token, undefined, {
+            onAgentEvent: event => events.push(event),
+            onAgentPrompt: (id, prompt) => {
+                promptOrder.push(id);
+                prompts.set(id, prompt);
+            },
+        },
+    );
+
+    assert.equal(result.candidates.length, 1);
+    const starts = started(events);
+    assert.ok(starts.length > 0);
+    assert.equal(prompts.size, starts.length);
+    assert.deepEqual(promptOrder, starts.map(agent => agent.id));
+    for (const agent of starts) {
+        const prompt = prompts.get(agent.id);
+        assert.ok(prompt && prompt.length > 0, `agent ${agent.id} received its prompt`);
+    }
+});
+
+// ─── 3. concurrency limit and queueing ──────────────────────────────────────
 test('with concurrency 1 the next generation agent waits for the previous finished event', async () => {
     const files = [change('src/a.ts'), change('src/b.ts')];
     const env = setup((prompt) => {

@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { afterEach } from 'node:test';
 import { ModelError } from '../src/llm/chatModel';
+import type { Logger } from '../src/logging/logger';
 import type {
     AgentEvent,
     CommitCandidate,
@@ -70,6 +74,7 @@ let generateForGroup: (
     token: { isCancellationRequested: boolean },
     history: unknown,
     onAgentEvent?: (event: AgentEvent) => void,
+    onAgentPrompt?: (id: string, prompt: string) => void,
 ) => Promise<CommitCandidate>;
 let createDeepSeekModel: (config: ModelConfig) => unknown;
 let listModelsImpl: (config: { baseUrl: string; apiKey: string; headers: Record<string, string> }) => Promise<Array<{ id: string; name: string }>>;
@@ -91,6 +96,29 @@ let indexTree: string;
 let commitResult: { committedIds: string[]; error?: Error };
 let configStore: Record<string, unknown>;
 let configUpdates: Array<{ key: string; value: unknown; target: unknown }>;
+let storageDir: string;
+let openedDocuments: string[];
+let logEntries: Array<{ level: string; message: string }>;
+let logShown: number;
+const tempDirs: string[] = [];
+
+afterEach(() => {
+    for (const directory of tempDirs) {
+        rmSync(directory, { recursive: true, force: true });
+    }
+    tempDirs.length = 0;
+});
+
+function createTestLogger(): Logger {
+    return {
+        info: (message) => logEntries.push({ level: 'info', message }),
+        warn: (message) => logEntries.push({ level: 'warn', message }),
+        error: (message) => logEntries.push({ level: 'error', message }),
+        debug: (message) => logEntries.push({ level: 'debug', message }),
+        trace: (message) => logEntries.push({ level: 'trace', message }),
+        show: () => { logShown += 1; },
+    };
+}
 
 class GitService {
     static async getRepository() { return { rootUri: { fsPath: '/test-repo' } }; }
@@ -121,6 +149,9 @@ nodeModule._load = function (id: string, ...args: unknown[]) {
             CancellationTokenSource,
             CancellationError: class extends Error { },
             ConfigurationTarget: { Global: 1 },
+            Uri: {
+                file: (fsPath: string) => ({ fsPath }),
+            },
             workspace: {
                 getConfiguration: () => ({
                     get: (key: string, fallback: unknown) =>
@@ -130,9 +161,13 @@ nodeModule._load = function (id: string, ...args: unknown[]) {
                         configUpdates.push({ key, value, target });
                     },
                 }),
+                openTextDocument: async (uri: { fsPath: string }) => ({ uri }),
             },
             window: {
                 showInformationMessage: (message: string) => { infoMessages.push(message); },
+                showTextDocument: async (document: { uri: { fsPath: string } }) => {
+                    openedDocuments.push(document.uri.fsPath);
+                },
                 showWarningMessage: (message: string, options: unknown, ...items: string[]) => {
                     warnings.push({ message, options, items });
                     return Promise.resolve(warningChoice);
@@ -185,7 +220,10 @@ nodeModule._load = function (id: string, ...args: unknown[]) {
                 token: { isCancellationRequested: boolean },
                 history: unknown,
                 onAgentEvent?: (event: AgentEvent) => void,
-            ) => generateForGroup(model, group, changes, options, token, history, onAgentEvent),
+                onAgentPrompt?: (id: string, prompt: string) => void,
+            ) => generateForGroup(
+                model, group, changes, options, token, history, onAgentEvent, onAgentPrompt
+            ),
         };
     }
     return originalLoad.call(this, id, ...args);
@@ -208,8 +246,13 @@ function setup(options: { apiKey?: string | null } = {}) {
     diffText = twoFileDiff;
     indexTree = 'tree-1';
     commitResult = { committedIds: [] };
-    configStore = {};
+    configStore = { 'runLogs.keep': 0 };
     configUpdates = [];
+    storageDir = mkdtempSync(join(tmpdir(), 'ac-panel-'));
+    tempDirs.push(storageDir);
+    openedDocuments = [];
+    logEntries = [];
+    logShown = 0;
     modelConfigs = [];
     listModelCalls = [];
     secretStore = options.apiKey === null ? {} : { [API_KEY_SECRET]: options.apiKey ?? 'sk-test' };
@@ -226,12 +269,13 @@ function setup(options: { apiKey?: string | null } = {}) {
     generateForGroup = async () => candidateA;
     const panel = new PanelManager({
         subscriptions: [],
+        globalStorageUri: { fsPath: storageDir },
         secrets: {
             get: async (key: string) => secretStore[key],
             store: async (key: string, value: string) => { secretStore[key] = value; },
             delete: async (key: string) => { delete secretStore[key]; },
         },
-    });
+    }, createTestLogger());
     // PanelManager.post() only needs the webview's message channel in these tests.
     (panel as any).panel = { webview: { postMessage: (message: ExtensionMessage) => posts.push(message) } };
     return panel;
@@ -737,14 +781,8 @@ test('a custom model id is kept even when it is not in the model list', async ()
 test('a failed model list falls back to the presets', async () => {
     const panel = setup();
     listModelsImpl = async () => { throw new Error('models unavailable'); };
-    const originalWarn = console.warn;
-    const warningsLogged: unknown[][] = [];
-    console.warn = (...args: unknown[]) => { warningsLogged.push(args); };
-    try {
-        await panel.handleMessage({ type: 'ready' });
-    } finally {
-        console.warn = originalWarn;
-    }
+
+    await panel.handleMessage({ type: 'ready' });
 
     const message = posts.find(
         (post): post is Extract<ExtensionMessage, { type: 'availableModels' }> =>
@@ -752,7 +790,9 @@ test('a failed model list falls back to the presets', async () => {
     );
     assert.ok(message);
     assert.deepEqual(message.models, presetModels);
-    assert.equal(warningsLogged.length, 1);
+    assert.ok(logEntries.some((entry) =>
+        entry.level === 'warn' && entry.message.includes('Failed to load models')
+    ));
     assert.ok(listModelCalls[0].apiKey);
 });
 
@@ -812,4 +852,47 @@ test('the model is built from the current endpoint settings', async () => {
     }]);
     assert.ok(passedModel);
     assert.equal(passedModel.id, 'custom-model');
+});
+
+test('showLogs reveals the channel and openRunLog falls back to the picker', async () => {
+    const panel = setup();
+
+    await panel.handleMessage({ type: 'showLogs' });
+    await panel.handleMessage({ type: 'openRunLog' });
+
+    assert.equal(logShown, 1);
+    assert.deepEqual(commandsExecuted, [
+        { command: 'autocommit-for-deepseek.openRunLog', args: [] },
+    ]);
+    assert.deepEqual(openedDocuments, []);
+});
+
+test('generation creates a run record with run and end rows and opens it from the panel', async () => {
+    const panel = setup();
+    configStore['runLogs.keep'] = 20;
+
+    await panel.generate({ language: 'en', conventionalCommits: true, model: 'deepseek-flash' });
+
+    const runsDirectory = join(storageDir, 'runs');
+    const files = readdirSync(runsDirectory);
+    assert.equal(files.length, 1);
+    const rows = readFileSync(join(runsDirectory, files[0]), 'utf8')
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line));
+    assert.deepEqual(rows.map((row) => row.type), ['run', 'end']);
+    assert.equal(rows[0].trigger, 'generate');
+    assert.equal(rows[0].repo, 'test-repo');
+    assert.equal(rows[1].status, 'done');
+    assert.equal(rows[1].totals.requests, 0);
+    assert.ok(logEntries.some((entry) =>
+        entry.level === 'info' && entry.message.startsWith('Run started')
+    ));
+    assert.ok(logEntries.some((entry) =>
+        entry.level === 'info' && entry.message.startsWith('Run ended · done')
+    ));
+
+    await panel.handleMessage({ type: 'openRunLog' });
+    assert.deepEqual(openedDocuments, [join(runsDirectory, files[0])]);
+    assert.deepEqual(commandsExecuted, []);
 });

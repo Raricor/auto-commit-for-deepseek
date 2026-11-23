@@ -2,7 +2,7 @@
     "name": "autocommit-for-deepseek",
     "displayName": "AutoCommit For DeepSeek",
     "description": "Generate smart git commit messages from staged changes with the DeepSeek API",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "license": "GPL-3.0",
     "publisher": "winterYANGWT",
     "author": {
@@ -21,6 +21,11 @@
     },
     "activationEvents": [],
     "main": "./out/extension.js",
+    "icon": "images/icon.png",
+    "galleryBanner": {
+        "color": "#1B2A6B",
+        "theme": "dark"
+    },
     "extensionDependencies": [
         "vscode.git"
     ],
@@ -38,6 +43,14 @@
             {
                 "command": "autocommit-for-deepseek.clearApiKey",
                 "title": "AutoCommit For DeepSeek: Clear API Key"
+            },
+            {
+                "command": "autocommit-for-deepseek.showLogs",
+                "title": "AutoCommit For DeepSeek: Show Logs"
+            },
+            {
+                "command": "autocommit-for-deepseek.openRunLog",
+                "title": "AutoCommit For DeepSeek: Open Run Log…"
             }
         ],
         "menus": {
@@ -136,6 +149,18 @@
                     "minimum": 1,
                     "maximum": 8,
                     "description": "Most model requests in flight at once."
+                },
+                "autocommit-for-deepseek.runLogs.keep": {
+                    "type": "number",
+                    "default": 20,
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "How many run records (JSONL) to keep. 0 disables run records."
+                },
+                "autocommit-for-deepseek.runLogs.includePrompts": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Include the full prompt (which contains the staged code diff) in run records."
                 }
             }
         }
