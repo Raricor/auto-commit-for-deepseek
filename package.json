@@ -1,0 +1,168 @@
+{
+    "name": "autocommit-for-deepseek",
+    "displayName": "AutoCommit For DeepSeek",
+    "description": "Generate smart git commit messages from staged changes with the DeepSeek API",
+    "version": "0.1.0",
+    "license": "GPL-3.0",
+    "publisher": "winterYANGWT",
+    "author": {
+        "name": "winterYANGWT",
+        "email": "winterYANGWT@users.noreply.github.com"
+    },
+    "engines": {
+        "vscode": "^1.90.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/winterYANGWT/Auto-Commit-For-DeepSeek"
+    },
+    "activationEvents": [],
+    "main": "./out/extension.js",
+    "extensionDependencies": [
+        "vscode.git"
+    ],
+    "contributes": {
+        "commands": [
+            {
+                "command": "autocommit-for-deepseek.generate",
+                "title": "AutoCommit For DeepSeek: Generate Commits",
+                "icon": "$(sparkle)"
+            },
+            {
+                "command": "autocommit-for-deepseek.setApiKey",
+                "title": "AutoCommit For DeepSeek: Set API Key"
+            },
+            {
+                "command": "autocommit-for-deepseek.clearApiKey",
+                "title": "AutoCommit For DeepSeek: Clear API Key"
+            }
+        ],
+        "menus": {
+            "scm/title": [
+                {
+                    "command": "autocommit-for-deepseek.generate",
+                    "group": "navigation",
+                    "when": "scmProvider == git"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "AutoCommit For DeepSeek",
+            "properties": {
+                "autocommit-for-deepseek.conventionalCommits": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Use Conventional Commits style (feat/fix/docs/style/refactor/test/chore)"
+                },
+                "autocommit-for-deepseek.language": {
+                    "type": "string",
+                    "enum": [
+                        "en",
+                        "zh",
+                        "auto"
+                    ],
+                    "enumDescriptions": [
+                        "English",
+                        "Chinese (中文)",
+                        "Auto-detect from current user's git log history"
+                    ],
+                    "default": "en",
+                    "description": "Language for generated commit messages"
+                },
+                "autocommit-for-deepseek.model": {
+                    "type": "string",
+                    "default": "deepseek-flash",
+                    "description": "DeepSeek model id, e.g. deepseek-flash or deepseek-v4-pro. Any other id supported by the endpoint can be used."
+                },
+                "autocommit-for-deepseek.reasoningEffort": {
+                    "type": "string",
+                    "default": "",
+                    "enum": [
+                        "",
+                        "none",
+                        "low",
+                        "high",
+                        "max"
+                    ],
+                    "enumDescriptions": [
+                        "Send no thinking parameters and use the endpoint default (DeepSeek: thinking on, effort high)",
+                        "Disable thinking",
+                        "Use a small amount of thinking",
+                        "Use a large amount of thinking",
+                        "Use the maximum available thinking"
+                    ],
+                    "description": "Thinking effort sent with each request."
+                },
+                "autocommit-for-deepseek.baseUrl": {
+                    "type": "string",
+                    "default": "https://api.deepseek.com",
+                    "description": "OpenAI-compatible endpoint. Requests are sent to {baseUrl}/chat/completions."
+                },
+                "autocommit-for-deepseek.requestHeaders": {
+                    "type": "object",
+                    "default": {},
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "description": "Additional HTTP headers. These can override the default headers, including Authorization."
+                },
+                "autocommit-for-deepseek.maxInputTokens": {
+                    "type": "number",
+                    "default": 131072,
+                    "minimum": 8192,
+                    "maximum": 1048576,
+                    "description": "Maximum input tokens per request, estimated locally."
+                },
+                "autocommit-for-deepseek.minCommits": {
+                    "type": "number",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Fewest commits to generate. 0 means no limit."
+                },
+                "autocommit-for-deepseek.maxCommits": {
+                    "type": "number",
+                    "default": 0,
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Most commits to generate. 0 means no limit."
+                },
+                "autocommit-for-deepseek.concurrency": {
+                    "type": "number",
+                    "default": 4,
+                    "minimum": 1,
+                    "maximum": 8,
+                    "description": "Most model requests in flight at once."
+                }
+            }
+        }
+    },
+    "scripts": {
+        "typecheck": "tsc -p ./ --noEmit && tsc -p tsconfig.webview.json",
+        "test": "tsc -p tsconfig.test.json && node --test .test-out/tests/*.test.js",
+        "package": "npx --yes @vscode/vsce@4.0.0 package --no-dependencies --out autocommit-for-deepseek.vsix",
+        "vscode:prepublish": "npm run compile:prod",
+        "compile": "tsc -p ./ && node esbuild.webview.mjs",
+        "compile:prod": "tsc -p ./ && node esbuild.webview.mjs --production",
+        "compile:ext": "tsc -p ./",
+        "compile:webview": "node esbuild.webview.mjs",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@types/react": "^19.2.14",
+        "@types/react-dom": "^19.2.3",
+        "@types/vscode": "^1.90.0",
+        "@vscode/codicons": "^0.0.46-24",
+        "esbuild": "^0.28.0",
+        "react": "^19.2.5",
+        "react-dom": "^19.2.5",
+        "typescript": "^5.4.0"
+    },
+    "dependencies": {
+        "lucide-react": "^1.8.0"
+    }
+}
