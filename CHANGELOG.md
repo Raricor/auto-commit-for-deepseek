@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] — 0.1.0
+## [1.0.0] — 2026-11-23
 
 First release of the DeepSeek edition. The grouping, generation, ordering and snapshot-commit
 strategy comes from AutoCommit For Github Copilot 1.0.0; the model layer and the UI around it are new.
@@ -18,6 +18,11 @@ strategy comes from AutoCommit For Github Copilot 1.0.0; the model layer and the
 - **Agents** tab: one row per model request with live thinking, raw output, retries, errors and
   token usage; run totals. Pending commit cards show the live state of their request, and
   **Show thinking** jumps from a commit to its request.
+- Logs: an *AutoCommit For DeepSeek* output channel (runs, requests, retries, errors, commits;
+  no keys, diffs or thinking text), and one JSONL run record per run with every request's thinking,
+  answer and usage (newest 20 kept; prompts only with `runLogs.includePrompts`). `Show Logs` and
+  `Open Run Log…` commands, plus buttons in the Agents tab and on errors.
+- Extension and panel icon.
 
 ### Changed
 
