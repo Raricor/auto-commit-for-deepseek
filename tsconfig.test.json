@@ -1,0 +1,18 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": ".",
+        "outDir": ".test-out"
+    },
+    "include": [
+        "src/types.ts",
+        "src/git/diffAnalyzer.ts",
+        "src/git/gitIdentity.ts",
+        "src/git/gitService.ts",
+        "src/deepseek/**/*.ts",
+        "src/llm/**/*.ts",
+        "src/ui/panelManager.ts",
+        "tests/**/*.ts"
+    ],
+    "exclude": []
+}

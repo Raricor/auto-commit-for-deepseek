@@ -1,0 +1,16 @@
+node_modules/
+.github/
+.vscode-test/
+.test-out/
+tests/
+docs/superpowers/
+src/
+media/
+scripts/
+*.vsix
+**/*.map
+CLAUDE.md
+.gitignore
+tsconfig*.json
+esbuild.webview.mjs
+.cache/
